@@ -88,6 +88,30 @@ check_auth() {
     return 0
 }
 
+get_tunnel_id() {
+    local tunnel_name=$1
+    cloudflared tunnel info "$tunnel_name" 2>/dev/null | grep -oE '[a-f0-9-]{36}' | head -1
+}
+
+check_credentials() {
+    local tunnel_name=$1
+    local tunnel_id=$(get_tunnel_id "$tunnel_name")
+
+    if [[ -z "$tunnel_id" ]]; then
+        print_error "Tunnel '$tunnel_name' not found."
+        return 1
+    fi
+
+    local cred_file="$CLOUDFLARED_DIR/$tunnel_id.json"
+    if [[ ! -f "$cred_file" ]]; then
+        print_error "Credentials file not found: $cred_file"
+        print_warning "This tunnel was probably created on another machine."
+        print_info "Copy the credentials file from the original machine or recreate the tunnel."
+        return 1
+    fi
+    return 0
+}
+
 # 1) Quick Tunnel
 quick_tunnel() {
     print_header
@@ -237,18 +261,23 @@ create_config() {
     fi
 
     echo ""
-    echo "Add routes (empty hostname to finish):"
-    echo ""
+    read -r -p "How many routes? " route_count
+
+    if [[ -z "$route_count" ]] || [[ "$route_count" -lt 1 ]]; then
+        route_count=1
+    fi
 
     routes=""
-    while true; do
-        read -p "Hostname (e.g., app.yourdomain.com): " hostname
+    for ((i=1; i<=route_count; i++)); do
+        echo ""
+        echo "Route $i:"
+        read -r -p "  Hostname (e.g., app.yourdomain.com): " hostname
 
         if [[ -z "$hostname" ]]; then
-            break
+            continue
         fi
 
-        read -p "Local service (e.g., http://localhost:3000): " service
+        read -r -p "  Local service (e.g., http://localhost:3000): " service
 
         if [[ -z "$service" ]]; then
             service="http://localhost:80"
@@ -303,6 +332,11 @@ run_tunnel() {
         return
     fi
 
+    if ! check_credentials "$tunnel_name"; then
+        press_enter
+        return
+    fi
+
     echo ""
     read -p "Local URL (leave empty to use config.yml): " local_url
 
@@ -333,6 +367,11 @@ start_tunnel_background() {
 
     if [[ -z "$tunnel_name" ]]; then
         print_error "Name cannot be empty."
+        press_enter
+        return
+    fi
+
+    if ! check_credentials "$tunnel_name"; then
         press_enter
         return
     fi
